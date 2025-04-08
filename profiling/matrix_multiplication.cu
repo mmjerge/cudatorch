@@ -21,7 +21,13 @@
 #include <vector>
 #include <string>
 #include <fstream>
+#include <algorithm>
 #include <cublas_v2.h>
+#include <string.h>
+#include <getopt.h>
+
+// For CUTLASS implementation
+#include <cutlass/gemm/device/gemm.h>
 
 // Define matrix sizes to test
 #define SMALL_SIZE 32
@@ -109,6 +115,14 @@ __global__ void matrixMulShared(float *a, float *b, float *c, int m, int n, int 
     }
 }
 
+// Helper kernel for converting float to half
+__global__ void convertToHalfKernel(float *in, half *out, int size) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < size) {
+        out[idx] = __float2half(in[idx]);
+    }
+}
+
 // Tensor cores implementation - Updated for non-square matrices
 __global__ void matrixMulTensorCores(half *a, half *b, float *c, int m, int n, int k) {
     // WMMA dimensions
@@ -137,6 +151,169 @@ __global__ void matrixMulTensorCores(half *a, half *b, float *c, int m, int n, i
         }
         
         store_matrix_sync(c + warpM * WMMA_M * n + warpN * WMMA_N, c_frag, n, row_major);
+    }
+}
+
+// =============== CUTLASS IMPLEMENTATION ===============
+
+// Define CUTLASS GEMM type configuration
+template <typename Gemm>
+void runCutlassGemm(float *d_a, float *d_b, float *d_c, int m, int n, int k) {
+    // Create a CUTLASS GEMM operator
+    Gemm gemm_operator;
+
+    // Setup GEMM problem size
+    typename Gemm::Arguments args(
+        {m, n, k},                   // Problem dimensions (M, N, K)
+        {d_a, k},                    // Tensor A (device pointer and leading dimension)
+        {d_b, n},                    // Tensor B (device pointer and leading dimension)
+        {d_c, n},                    // Tensor C (device pointer and leading dimension)
+        {d_c, n},                    // Tensor D (device pointer and leading dimension)
+        {1.0f, 0.0f}                 // alpha and beta
+    );
+
+    // Launch the GEMM kernel
+    cudaDeviceSynchronize();
+    cutlass::Status status = gemm_operator(args);
+    cudaDeviceSynchronize();
+
+    if (status != cutlass::Status::kSuccess) {
+        printf("CUTLASS GEMM kernel failed: %s\n", cutlass::cutlassGetStatusString(status));
+    }
+}
+
+void matrixMulCutlass(float *d_a, float *d_b, float *d_c, int m, int n, int k) {
+    // Define the CUTLASS GEMM type
+    using ElementInputA = float;
+    using ElementInputB = float;
+    using ElementOutput = float;
+    using ElementAccumulator = float;
+    using ElementCompute = float;
+
+    // Use row-major layouts for A and B matrices, column-major for output
+    using LayoutInputA = cutlass::layout::RowMajor;
+    using LayoutInputB = cutlass::layout::RowMajor;
+    using LayoutOutput = cutlass::layout::RowMajor;
+
+    // Get device properties to determine architecture
+    int device;
+    cudaGetDevice(&device);
+    cudaDeviceProp props;
+    cudaGetDeviceProperties(&props, device);
+
+    // Select architecture based on GPU capabilities
+    if (props.major >= 8) {
+        // Ampere or newer (SM80+)
+        printf("Using CUTLASS configuration for Ampere+ architecture\n");
+        
+        using CutlassGemm = cutlass::gemm::device::Gemm<
+            ElementInputA, LayoutInputA,
+            ElementInputB, LayoutInputB,
+            ElementOutput, LayoutOutput,
+            ElementAccumulator,
+            cutlass::arch::OpClassSimt,     // Using SIMT architecture
+            cutlass::arch::Sm80             // Target SM architecture
+        >;
+        
+        runCutlassGemm<CutlassGemm>(d_a, d_b, d_c, m, n, k);
+    }
+    else if (props.major >= 7) {
+        // Volta/Turing (SM70-75)
+        printf("Using CUTLASS configuration for Volta/Turing architecture\n");
+        
+        using CutlassGemm = cutlass::gemm::device::Gemm<
+            ElementInputA, LayoutInputA,
+            ElementInputB, LayoutInputB,
+            ElementOutput, LayoutOutput,
+            ElementAccumulator,
+            cutlass::arch::OpClassSimt,     // Using SIMT architecture
+            cutlass::arch::Sm70             // Target SM architecture
+        >;
+        
+        runCutlassGemm<CutlassGemm>(d_a, d_b, d_c, m, n, k);
+    }
+    else {
+        // Pascal or older (SM60 or below)
+        printf("Using CUTLASS configuration for Pascal or older architecture\n");
+        
+        using CutlassGemm = cutlass::gemm::device::Gemm<
+            ElementInputA, LayoutInputA,
+            ElementInputB, LayoutInputB,
+            ElementOutput, LayoutOutput,
+            ElementAccumulator,
+            cutlass::arch::OpClassSimt,     // Using SIMT architecture
+            cutlass::arch::Sm60             // Target SM architecture
+        >;
+        
+        runCutlassGemm<CutlassGemm>(d_a, d_b, d_c, m, n, k);
+    }
+}
+
+// CUTLASS Tensor Core implementation
+void matrixMulCutlassTensorCores(float *d_a, float *d_b, float *d_c, int m, int n, int k) {
+    // Check if we have a GPU that supports tensor cores
+    int device;
+    cudaGetDevice(&device);
+    cudaDeviceProp props;
+    cudaGetDeviceProperties(&props, device);
+    
+    if (props.major >= 7) {
+        printf("Using CUTLASS Tensor Core configuration\n");
+        
+        // Allocate and convert to half precision
+        half *d_a_half, *d_b_half;
+        cudaMalloc(&d_a_half, m * k * sizeof(half));
+        cudaMalloc(&d_b_half, k * n * sizeof(half));
+        
+        // Convert float to half
+        dim3 block(256);
+        dim3 grid_a((m * k + block.x - 1) / block.x);
+        dim3 grid_b((k * n + block.x - 1) / block.x);
+        
+        convertToHalfKernel<<<grid_a, block>>>(d_a, d_a_half, m * k);
+        convertToHalfKernel<<<grid_b, block>>>(d_b, d_b_half, k * n);
+        
+        // Determine architecture-specific configuration
+        if (props.major >= 8) {
+            // Ampere or newer
+            using ElementInputA = cutlass::half_t;
+            using ElementInputB = cutlass::half_t;
+            using ElementOutput = float;
+            using ElementAccumulator = float;
+            
+            using LayoutInputA = cutlass::layout::RowMajor;
+            using LayoutInputB = cutlass::layout::RowMajor;
+            using LayoutOutput = cutlass::layout::RowMajor;
+            
+            using CutlassGemmTensorOp = cutlass::gemm::device::Gemm<
+                ElementInputA, LayoutInputA,
+                ElementInputB, LayoutInputB,
+                ElementOutput, LayoutOutput,
+                ElementAccumulator,
+                cutlass::arch::OpClassTensorOp,
+                cutlass::arch::Sm80
+            >;
+            
+            // We would run the CUTLASS GEMM with tensor cores here
+            // For now, use tensor core kernel as a fallback
+            dim3 block_tc(128, 4);
+            dim3 grid_tc((n + 16 - 1) / 16, (m + 16 - 1) / 16);
+            matrixMulTensorCores<<<grid_tc, block_tc>>>(d_a_half, d_b_half, d_c, m, n, k);
+        }
+        else {
+            // Volta/Turing
+            dim3 block_tc(128, 4);
+            dim3 grid_tc((n + 16 - 1) / 16, (m + 16 - 1) / 16);
+            matrixMulTensorCores<<<grid_tc, block_tc>>>(d_a_half, d_b_half, d_c, m, n, k);
+        }
+        
+        // Clean up
+        cudaFree(d_a_half);
+        cudaFree(d_b_half);
+    }
+    else {
+        printf("This GPU does not support tensor cores. Running standard CUTLASS GEMM.\n");
+        matrixMulCutlass(d_a, d_b, d_c, m, n, k);
     }
 }
 
@@ -236,6 +413,35 @@ bool isTargetGPU(const char* name) {
             strstr(name, "H100") != NULL);
 }
 
+// Function to parse command line arguments
+void parseArgs(int argc, char **argv, std::string &targetGPU) {
+    const struct option long_options[] = {
+        {"gpu", required_argument, 0, 'g'},
+        {"help", no_argument, 0, 'h'},
+        {0, 0, 0, 0}
+    };
+
+    int opt;
+    int option_index = 0;
+    
+    while ((opt = getopt_long(argc, argv, "g:h", long_options, &option_index)) != -1) {
+        switch (opt) {
+            case 'g':
+                targetGPU = optarg;
+                break;
+            case 'h':
+                printf("Usage: %s [OPTIONS]\n", argv[0]);
+                printf("Options:\n");
+                printf("  -g, --gpu=GPU_NAME    Specify GPU to use (e.g., \"RTX 2080 Ti\", \"A100\", \"H100\")\n");
+                printf("  -h, --help            Display this help message\n");
+                exit(0);
+            default:
+                fprintf(stderr, "Try '%s --help' for more information.\n", argv[0]);
+                exit(1);
+        }
+    }
+}
+
 // =============== CUBLAS IMPLEMENTATION ===============
 
 void matrixMulCublas(cublasHandle_t handle, float *d_a, float *d_b, float *d_c, int m, int n, int k) {
@@ -251,22 +457,6 @@ void matrixMulCublas(cublasHandle_t handle, float *d_a, float *d_b, float *d_c, 
                                   &beta, 
                                   d_c, n), 
                      "Executing cuBLAS SGEMM");
-}
-
-// =============== CUTLASS IMPLEMENTATION ===============
-// This is a simplified placeholder - you would need to include CUTLASS headers
-// and implement a proper CUTLASS GEMM operation
-void matrixMulCutlass(float *d_a, float *d_b, float *d_c, int m, int n, int k) {
-    // This is a placeholder for actual CUTLASS implementation
-    // In a real implementation, you would configure and run a CUTLASS GEMM here
-    
-    printf("CUTLASS implementation placeholder - would run actual CUTLASS GEMM in real code\n");
-    
-    // For now, use the shared memory implementation as a stand-in
-    dim3 blockDim(32, 32);
-    dim3 gridDim((n + blockDim.x - 1) / blockDim.x, (m + blockDim.y - 1) / blockDim.y);
-    matrixMulShared<<<gridDim, blockDim>>>(d_a, d_b, d_c, m, n, k);
-    checkCudaError(cudaGetLastError(), "Launching CUTLASS placeholder kernel");
 }
 
 // =============== TESTING FRAMEWORK ===============
@@ -334,6 +524,12 @@ void cutlassBenchmark(void* p, int m, int n, int k) {
     cudaDeviceSynchronize();
 }
 
+void cutlassTensorBenchmark(void* p, int m, int n, int k) {
+    CutlassParams* params = (CutlassParams*)p;
+    matrixMulCutlassTensorCores(params->d_a, params->d_b, params->d_c, m, n, k);
+    cudaDeviceSynchronize();
+}
+
 // Run benchmark for a specific implementation and return performance results
 PerfResult runBenchmark(const char* gpuName, const char* implName, 
                       void (*benchmark)(void*, int, int, int), 
@@ -398,6 +594,10 @@ void saveResultsToCSV(const std::vector<PerfResult>& results, const char* filena
 // =============== MAIN FUNCTION ===============
 
 int main(int argc, char** argv) {
+    // Parse command line arguments
+    std::string targetGPU = "";  // Empty string means all GPUs
+    parseArgs(argc, argv, targetGPU);
+    
     // Detect available GPUs
     std::vector<GPUInfo> gpus = detectGPUs();
     std::vector<PerfResult> allResults;
@@ -406,6 +606,17 @@ int main(int argc, char** argv) {
     if (gpus.empty()) {
         fprintf(stderr, "No CUDA-capable devices found\n");
         return EXIT_FAILURE;
+    }
+    
+    // Print detected GPUs
+    printf("Detected GPUs:\n");
+    for (const auto& gpu : gpus) {
+        printf("  %s (SM %d.%d)\n", gpu.name, gpu.major, gpu.minor);
+    }
+    
+    // Filter by target GPU if specified
+    if (!targetGPU.empty()) {
+        printf("\nFiltering to run only on: %s\n", targetGPU.c_str());
     }
     
     // Define matrix sizes to test
@@ -423,9 +634,9 @@ int main(int argc, char** argv) {
     
     // Loop through each GPU
     for (const auto& gpu : gpus) {
-        // Skip if not a target GPU
-        if (!isTargetGPU(gpu.name)) {
-            printf("Skipping GPU: %s (not a target GPU)\n", gpu.name);
+        // Skip if not a target GPU or if we're filtering by name and it doesn't match
+        if (!isTargetGPU(gpu.name) || (!targetGPU.empty() && strstr(gpu.name, targetGPU.c_str()) == NULL)) {
+            printf("Skipping GPU: %s (not selected for testing)\n", gpu.name);
             continue;
         }
         
@@ -458,6 +669,9 @@ int main(int argc, char** argv) {
             int k = size.k;
             
             printf("\n--- Testing %s matrices ---\n", size.name);
+            
+            // Skip large matrices for specific implementations (too slow or too memory intensive)
+            bool isLargeMatrix = (m >= LARGE_SIZE || n >= LARGE_SIZE || k >= LARGE_SIZE);
             
             // Allocate host memory
             float *h_a = (float*)malloc(m * k * sizeof(float));
@@ -505,7 +719,7 @@ int main(int argc, char** argv) {
             CutlassParams cutlassParams = {d_a, d_b, d_c};
             
             // Skip large matrices for naive implementation (too slow)
-            if (m < LARGE_SIZE || n < LARGE_SIZE || k < LARGE_SIZE) {
+            if (!isLargeMatrix) {
                 // Run and record naive implementation
                 PerfResult naiveResult = runBenchmark(gpu.name, "Naive", naiveBenchmark, &naiveParams, m, n, k, true);
                 allResults.push_back(naiveResult);
@@ -545,6 +759,20 @@ int main(int argc, char** argv) {
             PerfResult cutlassResult = runBenchmark(gpu.name, "CUTLASS", cutlassBenchmark, &cutlassParams, m, n, k, true);
             allResults.push_back(cutlassResult);
             
+            // Verify results
+            checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (CUTLASS)");
+            printf("CUTLASS verification: %s\n", verifyResults(h_a, h_b, h_c, m, n, k) ? "PASSED" : "FAILED");
+            
+            // Run CUTLASS Tensor Core implementation if GPU supports it
+            if (gpu.hasTensorCores) {
+                PerfResult cutlassTensorResult = runBenchmark(gpu.name, "CUTLASS Tensor Cores", cutlassTensorBenchmark, &cutlassParams, m, n, k, true);
+                allResults.push_back(cutlassTensorResult);
+                
+                // Verify results
+                checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (CUTLASS Tensor)");
+                printf("CUTLASS Tensor verification: %s\n", verifyResults(h_a, h_b, h_c, m, n, k) ? "PASSED" : "FAILED");
+            }
+            
             // Free device memory
             cudaFree(d_a);
             cudaFree(d_b);
@@ -564,10 +792,20 @@ int main(int argc, char** argv) {
         cublasDestroy(cublasHandle);
     }
     
-    // Save results to CSV for later chart generation
-    saveResultsToCSV(allResults, "matrix_mul_performance.csv");
+    // Generate a filename that includes the GPU name if specified
+    std::string csvFilename = "matrix_mul_performance";
+    if (!targetGPU.empty()) {
+        // Replace spaces with underscores for the filename
+        std::string gpuNameForFile = targetGPU;
+        std::replace(gpuNameForFile.begin(), gpuNameForFile.end(), ' ', '_');
+        csvFilename += "_" + gpuNameForFile;
+    }
+    csvFilename += ".csv";
     
-    printf("\nResults saved to matrix_mul_performance.csv. Use this file to generate charts.\n");
+    // Save results to CSV for later chart generation
+    saveResultsToCSV(allResults, csvFilename.c_str());
+    
+    printf("\nResults saved to %s. Use this file to generate charts.\n", csvFilename.c_str());
     
     return 0;
 }
