@@ -1,4 +1,4 @@
-# Matrix Multiplication Benchmark
+# Matrix Performance Benchmark
 
 A comprehensive benchmark for comparing matrix multiplication performance across different GPU architectures and implementation methods.
 
@@ -18,13 +18,6 @@ A comprehensive benchmark for comparing matrix multiplication performance across
   - Non-square (1024×2048×1024)
 - Performance measurements in GFLOPs
 - Automated chart generation
-
-## Requirements
-
-- CUDA Toolkit 11.0 or higher
-- CUTLASS library
-- Python 3.x with matplotlib, pandas, and seaborn (for chart generation)
-- NVIDIA GPU with compute capability 7.0 or higher (for tensor core tests)
 
 ## Building the Benchmark
 
