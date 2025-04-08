@@ -6,12 +6,14 @@
  * 2. Shared memory optimization
  * 3. Shared Memory with Swizzling implementation (from Colfax post)
  * 4. Vectorized Memory Access with Transposition (from Lei Mao's blog)
+ * 5. Warp Shuffle implementation (using direct register-to-register transfers)
  *
  * Includes timing code to measure performance.
  * 
  * References:
  * - Colfax Research: https://research.colfax-intl.com/tutorial-matrix-transpose-in-cutlass/
  * - Lei Mao's Blog: https://leimao.github.io/article/CUDA-Matrix-Multiplication-Optimization/
+ * - NVIDIA Developer Blog: https://developer.nvidia.com/blog/using-cuda-warp-level-primitives/
  */
 
 #include <stdio.h>
@@ -160,6 +162,57 @@ __global__ void matrixTransposeVectorized4(float *input, float *output, int m, i
     }
 }
 
+__global__ void matrixTransposeWarpShuffle(float *input, float *output, int m, int n) {
+    // each warp will handle a 32x32 tile
+    // the 32x32 tile will be processed in 32 segments, each of size 32x1
+    // each thread in the warp is responsible for one element in each segment
+
+    // get starting position of the warp's tile
+    // int blockId = blockIdx.y * gridDim.x + blockIdx.x;
+    int threadId = threadIdx.y * blockDim.x + threadIdx.x;
+    // int warpId = threadId / 32;
+    int laneId = threadId % 32; // which lane this thread occupies with its warp (thread's position within the warp (0-31)
+
+    int baseRow = blockIdx.y * 32;
+    int baseCol = blockIdx.x * 32;
+
+    for (int i = 0; i < 32; i++) {
+        int row = baseRow + i;
+        int col =  baseCol + laneId;
+
+        float value = 0.0f;
+        if(row < m && col < n) {
+            value = input[row * n + col];
+        }
+
+        // Transpose via warp shuffle:
+        // In a traditional transpose, element at position (i,j) moves to position (j,i)
+        // In this implementation, we process the matrix in 32×32 tiles, where:
+        // - Each iteration 'i' processes one row of the tile
+        // - Each thread at lane 'laneId' handles one column
+        // For the shuffle operation:
+        // - We need the value from position (laneId,i) to go to position (i,laneId)
+        // - So each thread gets the value from the thread whose lane ID matches
+        //   this thread's current row index 'i'
+
+        // The __shfl_sync(mask, value, sourceLane, width) function allows each thread to receive
+        // a value from another thread in the same warp specified by 'sourceLane'
+        // Here, we use laneId as the sourceLane to get values from threads corresponding to
+        // the properly transposed position
+        float transposed = __shfl_sync(0xFFFFFFFF, value, laneId, 32);
+
+        // For a transpose, if we read from (row,col), we should write to (col,row)
+        // Since row = baseRow + i and col = baseCol + laneId, we should write to:
+        int outRow = baseCol + laneId;  // Column becomes row
+        int outCol = baseRow + i;       // Row becomes column
+        
+        // write transposed value to output
+        if(outRow < n && outCol < m) {
+            output[outRow * m + outCol] = transposed;
+        }
+    }
+}
+
 void checkCudaError(cudaError_t error, const char *message) {
     if (error != cudaSuccess) {
         fprintf(stderr, "CUDA error: %s: %s\n", message, cudaGetErrorString(error));
@@ -300,6 +353,34 @@ int main() {
     cudaEventElapsedTime(&elapsed_time, start, stop);
 
     printf("Vectorized transpose kernel execution time: %.2f ms\n", elapsed_time);
+
+    // Copy result back to host
+    checkCudaError(cudaMemcpy(h_output, d_output, bytes_output, cudaMemcpyDeviceToHost), "Copying d_output to h_output");
+
+    // Verify the result
+    verification_result = verifyTranspose(h_input, h_output, M, N);
+    printf("Verification %s\n", verification_result ? "PASSED" : "FAILED");
+
+    // ====================== WARP SHUFFLE IMPLEMENTATION ======================
+    printf("\n=== Warp Shuffle Matrix Transpose Implementation ===\n");
+
+    // configuring for warp-level operations
+    dim3 blockDimWarp(32, 8);  // 256 threads per block (8 warps of 32 threads each)
+    // grid dimensions to cover the entire matrix with 32x32 tiles:
+    // using ceiling division (n+32-1)/32 to ensure we have enough blocks to cover any partial tiles at the edges
+    // this ensures every matrix element is processed even when matrix dimensions aren't multiples of 32
+    dim3 gridDimWarp((N + 32 - 1) / 32, (M + 32 - 1) / 32);
+
+    cudaEventRecord(start);
+
+    matrixTransposeWarpShuffle<<<gridDimWarp, blockDimWarp>>>(d_input, d_output, M, N);
+    checkCudaError(cudaGetLastError(), "Launching warp shuffle transpose kernel");
+
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    cudaEventElapsedTime(&elapsed_time, start, stop);
+
+    printf("Warp shuffle transpose kernel execution time: %.2f ms\n", elapsed_time);
 
     // Copy result back to host
     checkCudaError(cudaMemcpy(h_output, d_output, bytes_output, cudaMemcpyDeviceToHost), "Copying d_output to h_output");
