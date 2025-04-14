@@ -1,0 +1,213 @@
+Running on node: cheetah01
+Target GPU: A100
+Requested GRES: gpu:nvidia_a100-pcie-40gb:1
+Running binary: matrix_transpose_A100
+Available GPUs:
+GPU 0: NVIDIA A100-PCIE-40GB (UUID: GPU-ea5f3c64-eda4-0fe7-05ad-23d5d85460d1)
+LD_LIBRARY_PATH: /sw/ubuntu2204/ebu082024/software/common/core/cuda/12.4.0/lib64:/sw/ubuntu2204/ebu082024/software/common/core/cuda/12.4.0/nvvm/lib64:/sw/ubuntu2204/ebu082024/software/common/core/cuda/12.4.0/extras/CUPTI/lib64:/sw/ubuntu2204/ebu082024/software/common/core/cuda/12.4.0/lib:/sw/ubuntu/custom/slurm/current/lib::
+	libcublas.so.12 => /sw/ubuntu2204/ebu082024/software/common/core/cuda/12.4.0/lib64/libcublas.so.12 (0x000015168d200000)
+	libcublasLt.so.12 => /sw/ubuntu2204/ebu082024/software/common/core/cuda/12.4.0/lib64/libcublasLt.so.12 (0x000015166ee00000)
+Detected GPUs:
+  NVIDIA A100-PCIE-40GB (SM 8.0)
+
+=== Testing on GPU: NVIDIA A100-PCIE-40GB ===
+
+
+========== Testing Small (32x32) matrices on NVIDIA A100-PCIE-40GB ==========
+
+=== Naive Matrix Transpose Implementation ===
+Transposing a 32 x 32 matrix
+Naive transpose kernel execution time: 0.28 ms
+Naive transpose kernel throughput: 0.03 GB/s
+Verification PASSED
+
+=== Shared Memory Matrix Transpose Implementation ===
+Shared memory transpose kernel execution time: 0.02 ms
+Shared memory transpose kernel throughput: 0.37 GB/s
+Verification PASSED
+
+=== Shared Memory with Swizzling Matrix Transpose Implementation ===
+Shared memory with swizzling transpose kernel execution time: 0.02 ms
+Shared memory with swizzling transpose kernel throughput: 0.38 GB/s
+Verification PASSED
+
+=== Vectorized Memory Access Matrix Transpose Implementation ===
+Vectorized transpose kernel execution time: 0.02 ms
+Vectorized transpose kernel throughput: 0.37 GB/s
+Verification PASSED
+
+=== Warp Shuffle Matrix Transpose Implementation ===
+Warp shuffle transpose kernel execution time: 0.04 ms
+Warp shuffle transpose kernel throughput: 0.19 GB/s
+Verification PASSED
+
+=== cuBLAS Matrix Transpose Implementation ===
+cuBLAS transpose execution time: 0.56 ms
+cuBLAS transpose kernel throughput: 0.01 GB/s
+Verification PASSED
+
+=== CuTe Naive Matrix Transpose Implementation ===
+CuTe naive transpose kernel execution time: 0.02 ms
+CuTe naive transpose kernel throughput: 0.39 GB/s
+Verification PASSED
+
+=== CuTe Shared Memory Matrix Transpose Implementation ===
+CuTe shared memory transpose kernel execution time: 0.02 ms
+CuTe shared memory transpose kernel throughput: 0.41 GB/s
+Verification PASSED
+
+=== CuTe Swizzled Matrix Transpose Implementation ===
+CuTe swizzled transpose kernel execution time: 0.02 ms
+CuTe swizzled transpose kernel throughput: 0.46 GB/s
+Verification PASSED
+
+
+========== Testing Medium (1024x1024) matrices on NVIDIA A100-PCIE-40GB ==========
+
+=== Naive Matrix Transpose Implementation ===
+Transposing a 1024 x 1024 matrix
+Naive transpose kernel execution time: 0.05 ms
+Naive transpose kernel throughput: 145.93 GB/s
+Verification PASSED
+
+=== Shared Memory Matrix Transpose Implementation ===
+Shared memory transpose kernel execution time: 0.02 ms
+Shared memory transpose kernel throughput: 415.91 GB/s
+Verification PASSED
+
+=== Shared Memory with Swizzling Matrix Transpose Implementation ===
+Shared memory with swizzling transpose kernel execution time: 0.05 ms
+Shared memory with swizzling transpose kernel throughput: 151.26 GB/s
+Verification PASSED
+
+=== Vectorized Memory Access Matrix Transpose Implementation ===
+Vectorized transpose kernel execution time: 0.01 ms
+Vectorized transpose kernel throughput: 621.22 GB/s
+Verification PASSED
+
+=== Warp Shuffle Matrix Transpose Implementation ===
+Warp shuffle transpose kernel execution time: 0.32 ms
+Warp shuffle transpose kernel throughput: 24.70 GB/s
+Verification PASSED
+
+=== cuBLAS Matrix Transpose Implementation ===
+cuBLAS transpose execution time: 0.02 ms
+cuBLAS transpose kernel throughput: 369.35 GB/s
+Verification PASSED
+
+=== CuTe Naive Matrix Transpose Implementation ===
+CuTe naive transpose kernel execution time: 0.05 ms
+CuTe naive transpose kernel throughput: 154.91 GB/s
+Verification PASSED
+
+=== CuTe Shared Memory Matrix Transpose Implementation ===
+CuTe shared memory transpose kernel execution time: 0.02 ms
+CuTe shared memory transpose kernel throughput: 512.90 GB/s
+Verification PASSED
+
+=== CuTe Swizzled Matrix Transpose Implementation ===
+CuTe swizzled transpose kernel execution time: 0.02 ms
+CuTe swizzled transpose kernel throughput: 443.89 GB/s
+Verification PASSED
+
+
+========== Testing Large (8192x8192) matrices on NVIDIA A100-PCIE-40GB ==========
+
+=== Naive Matrix Transpose Implementation ===
+Transposing a 8192 x 8192 matrix
+Naive transpose kernel execution time: 2.82 ms
+Naive transpose kernel throughput: 177.27 GB/s
+Verification PASSED
+
+=== Shared Memory Matrix Transpose Implementation ===
+Shared memory transpose kernel execution time: 0.76 ms
+Shared memory transpose kernel throughput: 656.98 GB/s
+Verification PASSED
+
+=== Shared Memory with Swizzling Matrix Transpose Implementation ===
+Shared memory with swizzling transpose kernel execution time: 3.47 ms
+Shared memory with swizzling transpose kernel throughput: 143.93 GB/s
+Verification PASSED
+
+=== Vectorized Memory Access Matrix Transpose Implementation ===
+Vectorized transpose kernel execution time: 0.27 ms
+Vectorized transpose kernel throughput: 1836.94 GB/s
+Verification PASSED
+
+=== Warp Shuffle Matrix Transpose Implementation ===
+Warp shuffle transpose kernel execution time: 25.55 ms
+Warp shuffle transpose kernel throughput: 19.57 GB/s
+Verification PASSED
+
+=== cuBLAS Matrix Transpose Implementation ===
+cuBLAS transpose execution time: 0.47 ms
+cuBLAS transpose kernel throughput: 1055.24 GB/s
+Verification PASSED
+
+=== CuTe Naive Matrix Transpose Implementation ===
+CuTe naive transpose kernel execution time: 3.46 ms
+CuTe naive transpose kernel throughput: 144.60 GB/s
+Verification PASSED
+
+=== CuTe Shared Memory Matrix Transpose Implementation ===
+CuTe shared memory transpose kernel execution time: 0.73 ms
+CuTe shared memory transpose kernel throughput: 681.57 GB/s
+Verification PASSED
+
+=== CuTe Swizzled Matrix Transpose Implementation ===
+CuTe swizzled transpose kernel execution time: 0.76 ms
+CuTe swizzled transpose kernel throughput: 654.26 GB/s
+Verification PASSED
+
+
+========== Testing Non-square (1024x2048) matrices on NVIDIA A100-PCIE-40GB ==========
+
+=== Naive Matrix Transpose Implementation ===
+Transposing a 1024 x 2048 matrix
+Naive transpose kernel execution time: 0.11 ms
+Naive transpose kernel throughput: 136.47 GB/s
+Verification PASSED
+
+=== Shared Memory Matrix Transpose Implementation ===
+Shared memory transpose kernel execution time: 0.05 ms
+Shared memory transpose kernel throughput: 302.34 GB/s
+Verification PASSED
+
+=== Shared Memory with Swizzling Matrix Transpose Implementation ===
+Shared memory with swizzling transpose kernel execution time: 0.13 ms
+Shared memory with swizzling transpose kernel throughput: 124.59 GB/s
+Verification PASSED
+
+=== Vectorized Memory Access Matrix Transpose Implementation ===
+Vectorized transpose kernel execution time: 0.04 ms
+Vectorized transpose kernel throughput: 439.89 GB/s
+Verification PASSED
+
+=== Warp Shuffle Matrix Transpose Implementation ===
+Warp shuffle transpose kernel execution time: 0.79 ms
+Warp shuffle transpose kernel throughput: 19.74 GB/s
+Verification PASSED
+
+=== cuBLAS Matrix Transpose Implementation ===
+ ** On entry to SGEAM  parameter number 10 had an illegal value
+cuBLAS transpose execution time: 0.06 ms
+cuBLAS transpose kernel throughput: 242.44 GB/s
+Verification PASSED
+
+=== CuTe Naive Matrix Transpose Implementation ===
+CuTe naive transpose kernel execution time: 0.13 ms
+CuTe naive transpose kernel throughput: 122.07 GB/s
+Verification PASSED
+
+=== CuTe Shared Memory Matrix Transpose Implementation ===
+CuTe shared memory transpose kernel execution time: 0.04 ms
+CuTe shared memory transpose kernel throughput: 439.50 GB/s
+Verification PASSED
+
+=== CuTe Swizzled Matrix Transpose Implementation ===
+CuTe swizzled transpose kernel execution time: 0.04 ms
+CuTe swizzled transpose kernel throughput: 393.78 GB/s
+Verification PASSED
+
+Results saved to matrix_transpose_performance.csv
+Results saved to ../results/transpose/matrix_transpose_A100_performance.csv

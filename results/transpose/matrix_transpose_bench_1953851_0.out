@@ -1,0 +1,213 @@
+Running on node: cheetah02
+Target GPU: RTX2080
+Requested GRES: gpu:nvidia_geforce_rtx_2080_ti:1
+Running binary: matrix_transpose_RTX2080
+Available GPUs:
+GPU 0: NVIDIA GeForce RTX 2080 Ti (UUID: GPU-03a989e3-a68d-7bac-2ca3-b5d70483abc6)
+LD_LIBRARY_PATH: /sw/ubuntu2204/ebu082024/software/common/core/cuda/12.4.0/lib64:/sw/ubuntu2204/ebu082024/software/common/core/cuda/12.4.0/nvvm/lib64:/sw/ubuntu2204/ebu082024/software/common/core/cuda/12.4.0/extras/CUPTI/lib64:/sw/ubuntu2204/ebu082024/software/common/core/cuda/12.4.0/lib:/sw/ubuntu/custom/slurm/current/lib::
+	libcublas.so.12 => /sw/ubuntu2204/ebu082024/software/common/core/cuda/12.4.0/lib64/libcublas.so.12 (0x0000154ccb400000)
+	libcublasLt.so.12 => /sw/ubuntu2204/ebu082024/software/common/core/cuda/12.4.0/lib64/libcublasLt.so.12 (0x0000154cad000000)
+Detected GPUs:
+  NVIDIA GeForce RTX 2080 Ti (SM 7.5)
+
+=== Testing on GPU: NVIDIA GeForce RTX 2080 Ti ===
+
+
+========== Testing Small (32x32) matrices on NVIDIA GeForce RTX 2080 Ti ==========
+
+=== Naive Matrix Transpose Implementation ===
+Transposing a 32 x 32 matrix
+Naive transpose kernel execution time: 0.31 ms
+Naive transpose kernel throughput: 0.02 GB/s
+Verification PASSED
+
+=== Shared Memory Matrix Transpose Implementation ===
+Shared memory transpose kernel execution time: 0.02 ms
+Shared memory transpose kernel throughput: 0.34 GB/s
+Verification PASSED
+
+=== Shared Memory with Swizzling Matrix Transpose Implementation ===
+Shared memory with swizzling transpose kernel execution time: 0.02 ms
+Shared memory with swizzling transpose kernel throughput: 0.33 GB/s
+Verification PASSED
+
+=== Vectorized Memory Access Matrix Transpose Implementation ===
+Vectorized transpose kernel execution time: 0.02 ms
+Vectorized transpose kernel throughput: 0.36 GB/s
+Verification PASSED
+
+=== Warp Shuffle Matrix Transpose Implementation ===
+Warp shuffle transpose kernel execution time: 0.04 ms
+Warp shuffle transpose kernel throughput: 0.20 GB/s
+Verification PASSED
+
+=== cuBLAS Matrix Transpose Implementation ===
+cuBLAS transpose execution time: 11.57 ms
+cuBLAS transpose kernel throughput: 0.00 GB/s
+Verification PASSED
+
+=== CuTe Naive Matrix Transpose Implementation ===
+CuTe naive transpose kernel execution time: 0.02 ms
+CuTe naive transpose kernel throughput: 0.36 GB/s
+Verification PASSED
+
+=== CuTe Shared Memory Matrix Transpose Implementation ===
+CuTe shared memory transpose kernel execution time: 0.01 ms
+CuTe shared memory transpose kernel throughput: 0.53 GB/s
+Verification PASSED
+
+=== CuTe Swizzled Matrix Transpose Implementation ===
+CuTe swizzled transpose kernel execution time: 0.02 ms
+CuTe swizzled transpose kernel throughput: 0.50 GB/s
+Verification PASSED
+
+
+========== Testing Medium (1024x1024) matrices on NVIDIA GeForce RTX 2080 Ti ==========
+
+=== Naive Matrix Transpose Implementation ===
+Transposing a 1024 x 1024 matrix
+Naive transpose kernel execution time: 0.06 ms
+Naive transpose kernel throughput: 122.99 GB/s
+Verification PASSED
+
+=== Shared Memory Matrix Transpose Implementation ===
+Shared memory transpose kernel execution time: 0.03 ms
+Shared memory transpose kernel throughput: 258.62 GB/s
+Verification PASSED
+
+=== Shared Memory with Swizzling Matrix Transpose Implementation ===
+Shared memory with swizzling transpose kernel execution time: 0.07 ms
+Shared memory with swizzling transpose kernel throughput: 113.92 GB/s
+Verification PASSED
+
+=== Vectorized Memory Access Matrix Transpose Implementation ===
+Vectorized transpose kernel execution time: 0.02 ms
+Vectorized transpose kernel throughput: 498.25 GB/s
+Verification PASSED
+
+=== Warp Shuffle Matrix Transpose Implementation ===
+Warp shuffle transpose kernel execution time: 0.42 ms
+Warp shuffle transpose kernel throughput: 18.73 GB/s
+Verification PASSED
+
+=== cuBLAS Matrix Transpose Implementation ===
+cuBLAS transpose execution time: 0.02 ms
+cuBLAS transpose kernel throughput: 315.43 GB/s
+Verification PASSED
+
+=== CuTe Naive Matrix Transpose Implementation ===
+CuTe naive transpose kernel execution time: 0.06 ms
+CuTe naive transpose kernel throughput: 120.62 GB/s
+Verification PASSED
+
+=== CuTe Shared Memory Matrix Transpose Implementation ===
+CuTe shared memory transpose kernel execution time: 0.03 ms
+CuTe shared memory transpose kernel throughput: 293.09 GB/s
+Verification PASSED
+
+=== CuTe Swizzled Matrix Transpose Implementation ===
+CuTe swizzled transpose kernel execution time: 0.03 ms
+CuTe swizzled transpose kernel throughput: 281.59 GB/s
+Verification PASSED
+
+
+========== Testing Large (8192x8192) matrices on NVIDIA GeForce RTX 2080 Ti ==========
+
+=== Naive Matrix Transpose Implementation ===
+Transposing a 8192 x 8192 matrix
+Naive transpose kernel execution time: 3.51 ms
+Naive transpose kernel throughput: 142.35 GB/s
+Verification PASSED
+
+=== Shared Memory Matrix Transpose Implementation ===
+Shared memory transpose kernel execution time: 1.50 ms
+Shared memory transpose kernel throughput: 333.78 GB/s
+Verification PASSED
+
+=== Shared Memory with Swizzling Matrix Transpose Implementation ===
+Shared memory with swizzling transpose kernel execution time: 3.56 ms
+Shared memory with swizzling transpose kernel throughput: 140.33 GB/s
+Verification PASSED
+
+=== Vectorized Memory Access Matrix Transpose Implementation ===
+Vectorized transpose kernel execution time: 0.36 ms
+Vectorized transpose kernel throughput: 1399.09 GB/s
+Verification PASSED
+
+=== Warp Shuffle Matrix Transpose Implementation ===
+Warp shuffle transpose kernel execution time: 26.78 ms
+Warp shuffle transpose kernel throughput: 18.67 GB/s
+Verification PASSED
+
+=== cuBLAS Matrix Transpose Implementation ===
+cuBLAS transpose execution time: 1.11 ms
+cuBLAS transpose kernel throughput: 451.42 GB/s
+Verification PASSED
+
+=== CuTe Naive Matrix Transpose Implementation ===
+CuTe naive transpose kernel execution time: 3.54 ms
+CuTe naive transpose kernel throughput: 141.20 GB/s
+Verification PASSED
+
+=== CuTe Shared Memory Matrix Transpose Implementation ===
+CuTe shared memory transpose kernel execution time: 1.50 ms
+CuTe shared memory transpose kernel throughput: 333.13 GB/s
+Verification PASSED
+
+=== CuTe Swizzled Matrix Transpose Implementation ===
+CuTe swizzled transpose kernel execution time: 1.51 ms
+CuTe swizzled transpose kernel throughput: 331.00 GB/s
+Verification PASSED
+
+
+========== Testing Non-square (1024x2048) matrices on NVIDIA GeForce RTX 2080 Ti ==========
+
+=== Naive Matrix Transpose Implementation ===
+Transposing a 1024 x 2048 matrix
+Naive transpose kernel execution time: 0.12 ms
+Naive transpose kernel throughput: 134.74 GB/s
+Verification PASSED
+
+=== Shared Memory Matrix Transpose Implementation ===
+Shared memory transpose kernel execution time: 0.06 ms
+Shared memory transpose kernel throughput: 267.99 GB/s
+Verification PASSED
+
+=== Shared Memory with Swizzling Matrix Transpose Implementation ===
+Shared memory with swizzling transpose kernel execution time: 0.13 ms
+Shared memory with swizzling transpose kernel throughput: 123.90 GB/s
+Verification PASSED
+
+=== Vectorized Memory Access Matrix Transpose Implementation ===
+Vectorized transpose kernel execution time: 0.03 ms
+Vectorized transpose kernel throughput: 596.92 GB/s
+Verification PASSED
+
+=== Warp Shuffle Matrix Transpose Implementation ===
+Warp shuffle transpose kernel execution time: 0.81 ms
+Warp shuffle transpose kernel throughput: 19.17 GB/s
+Verification PASSED
+
+=== cuBLAS Matrix Transpose Implementation ===
+ ** On entry to SGEAM  parameter number 10 had an illegal value
+cuBLAS transpose execution time: 2.05 ms
+cuBLAS transpose kernel throughput: 7.62 GB/s
+Verification PASSED
+
+=== CuTe Naive Matrix Transpose Implementation ===
+CuTe naive transpose kernel execution time: 0.13 ms
+CuTe naive transpose kernel throughput: 124.82 GB/s
+Verification PASSED
+
+=== CuTe Shared Memory Matrix Transpose Implementation ===
+CuTe shared memory transpose kernel execution time: 0.05 ms
+CuTe shared memory transpose kernel throughput: 317.27 GB/s
+Verification PASSED
+
+=== CuTe Swizzled Matrix Transpose Implementation ===
+CuTe swizzled transpose kernel execution time: 0.05 ms
+CuTe swizzled transpose kernel throughput: 329.70 GB/s
+Verification PASSED
+
+Results saved to matrix_transpose_performance.csv
+Results saved to ../results/transpose/matrix_transpose_RTX2080_performance.csv
