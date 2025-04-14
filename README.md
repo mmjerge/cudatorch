@@ -48,10 +48,10 @@ nvcc -o matrix_multiplication matrix_multiplication.cu -lcublas -I/path/to/cutla
 #### Option 1: Use CUDA_VISIBLE_DEVICES environment variable
 ```bash
 # Run only on the first GPU in the system
-CUDA_VISIBLE_DEVICES=0 ./matrix_mul_benchmark
+CUDA_VISIBLE_DEVICES=0 ./matrix_multiplication
 
 # Run only on the second GPU
-CUDA_VISIBLE_DEVICES=1 ./matrix_mul_benchmark
+CUDA_VISIBLE_DEVICES=1 ./matrix_multiplication
 ```
 
 #### Option 2: SSH into specific machines

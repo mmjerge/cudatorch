@@ -33,3 +33,11 @@
 
 .vscode/
 matrix_multiplication
+matrix_mul_32x32x32_NVIDIA_GeForce_RTX_2080_Ti.csv
+.gitignore
+.gitignore
+matrix_mul_1024x1024x1024_NVIDIA_GeForce_RTX_2080_Ti.csv
+.gitignore
+matrix_mul_1024x2048x1024_NVIDIA_GeForce_RTX_2080_Ti.csv
+matrix_mul_8192x8192x8192_NVIDIA_GeForce_RTX_2080_Ti.csv
+matrix_mul_performance.csv
