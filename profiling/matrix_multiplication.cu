@@ -29,7 +29,6 @@
 // For CUTLASS implementation
 #include <cutlass/gemm/device/gemm.h>
 
-// Define matrix sizes to test
 #define SMALL_SIZE 32
 #define MEDIUM_SIZE 1024
 #define LARGE_SIZE 8192
@@ -37,7 +36,6 @@
 #define NON_SQUARE_N 2048
 #define NON_SQUARE_K 1024
 
-// Define a structure for GPU information
 struct GPUInfo {
     char name[256];
     int major;
@@ -45,7 +43,6 @@ struct GPUInfo {
     bool hasTensorCores;
 };
 
-// Define a structure for performance results
 struct PerfResult {
     std::string gpuName;
     std::string implementation;
@@ -58,7 +55,6 @@ struct PerfResult {
 
 // =============== KERNEL IMPLEMENTATIONS ===============
 
-// Naive implementation - Updated for non-square matrices (M×K * K×N = M×N)
 __global__ void matrixMulNaive(float *a, float *b, float *c, int m, int n, int k) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -72,9 +68,7 @@ __global__ void matrixMulNaive(float *a, float *b, float *c, int m, int n, int k
     }
 }
 
-// Shared memory implementation - Updated for non-square matrices
 __global__ void matrixMulShared(float *a, float *b, float *c, int m, int n, int k) {
-    // Tile size
     const int TILE_SIZE = 32;
     
     __shared__ float s_a[TILE_SIZE][TILE_SIZE];
@@ -115,7 +109,6 @@ __global__ void matrixMulShared(float *a, float *b, float *c, int m, int n, int 
     }
 }
 
-// Helper kernel for converting float to half
 __global__ void convertToHalfKernel(float *in, half *out, int size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < size) {
@@ -123,7 +116,6 @@ __global__ void convertToHalfKernel(float *in, half *out, int size) {
     }
 }
 
-// Tensor cores implementation - Updated for non-square matrices
 __global__ void matrixMulTensorCores(half *a, half *b, float *c, int m, int n, int k) {
     // WMMA dimensions
     const int WMMA_M = 16;
@@ -150,19 +142,16 @@ __global__ void matrixMulTensorCores(half *a, half *b, float *c, int m, int n, i
             }
         }
         
-        store_matrix_sync(c + warpM * WMMA_M * n + warpN * WMMA_N, c_frag, n, row_major);
+        store_matrix_sync(c + warpM * WMMA_M * n + warpN * WMMA_N, c_frag, n, nvcuda::wmma::mem_row_major);
     }
 }
 
 // =============== CUTLASS IMPLEMENTATION ===============
 
-// Define CUTLASS GEMM type configuration
 template <typename Gemm>
 void runCutlassGemm(float *d_a, float *d_b, float *d_c, int m, int n, int k) {
-    // Create a CUTLASS GEMM operator
     Gemm gemm_operator;
 
-    // Setup GEMM problem size
     typename Gemm::Arguments args(
         {m, n, k},                   // Problem dimensions (M, N, K)
         {d_a, k},                    // Tensor A (device pointer and leading dimension)
@@ -172,7 +161,6 @@ void runCutlassGemm(float *d_a, float *d_b, float *d_c, int m, int n, int k) {
         {1.0f, 0.0f}                 // alpha and beta
     );
 
-    // Launch the GEMM kernel
     cudaDeviceSynchronize();
     cutlass::Status status = gemm_operator(args);
     cudaDeviceSynchronize();
@@ -183,27 +171,22 @@ void runCutlassGemm(float *d_a, float *d_b, float *d_c, int m, int n, int k) {
 }
 
 void matrixMulCutlass(float *d_a, float *d_b, float *d_c, int m, int n, int k) {
-    // Define the CUTLASS GEMM type
     using ElementInputA = float;
     using ElementInputB = float;
     using ElementOutput = float;
     using ElementAccumulator = float;
     using ElementCompute = float;
 
-    // Use row-major layouts for A and B matrices, column-major for output
     using LayoutInputA = cutlass::layout::RowMajor;
     using LayoutInputB = cutlass::layout::RowMajor;
     using LayoutOutput = cutlass::layout::RowMajor;
 
-    // Get device properties to determine architecture
     int device;
     cudaGetDevice(&device);
     cudaDeviceProp props;
     cudaGetDeviceProperties(&props, device);
 
-    // Select architecture based on GPU capabilities
     if (props.major >= 8) {
-        // Ampere or newer (SM80+)
         printf("Using CUTLASS configuration for Ampere+ architecture\n");
         
         using CutlassGemm = cutlass::gemm::device::Gemm<
@@ -294,8 +277,6 @@ void matrixMulCutlassTensorCores(float *d_a, float *d_b, float *d_c, int m, int 
                 cutlass::arch::Sm80
             >;
             
-            // We would run the CUTLASS GEMM with tensor cores here
-            // For now, use tensor core kernel as a fallback
             dim3 block_tc(128, 4);
             dim3 grid_tc((n + 16 - 1) / 16, (m + 16 - 1) / 16);
             matrixMulTensorCores<<<grid_tc, block_tc>>>(d_a_half, d_b_half, d_c, m, n, k);
@@ -405,7 +386,6 @@ std::vector<GPUInfo> detectGPUs() {
     return gpus;
 }
 
-// Function to check if a GPU is one we want to test on
 bool isTargetGPU(const char* name) {
     // Check if the GPU is one of our target GPUs
     return (strstr(name, "RTX 2080 Ti") != NULL ||
@@ -461,7 +441,6 @@ void matrixMulCublas(cublasHandle_t handle, float *d_a, float *d_b, float *d_c, 
 
 // =============== TESTING FRAMEWORK ===============
 
-// Define structures for passing parameters to benchmark functions
 struct NaiveParams {
     float *d_a, *d_b, *d_c;
 };
@@ -484,7 +463,6 @@ struct CutlassParams {
     float *d_a, *d_b, *d_c;
 };
 
-// Benchmark functions
 void naiveBenchmark(void* p, int m, int n, int k) {
     NaiveParams* params = (NaiveParams*)p;
     dim3 blockDim(32, 32);
@@ -530,7 +508,6 @@ void cutlassTensorBenchmark(void* p, int m, int n, int k) {
     cudaDeviceSynchronize();
 }
 
-// Run benchmark for a specific implementation and return performance results
 PerfResult runBenchmark(const char* gpuName, const char* implName, 
                       void (*benchmark)(void*, int, int, int), 
                       void* params, int m, int n, int k, bool verify) {
@@ -540,17 +517,14 @@ PerfResult runBenchmark(const char* gpuName, const char* implName,
     cudaEventCreate(&stop);
     float elapsed_time;
     
-    // Run benchmark
     cudaEventRecord(start);
     benchmark(params, m, n, k);
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     cudaEventElapsedTime(&elapsed_time, start, stop);
     
-    // Calculate throughput
     float gflops = calculateGFlops(m, n, k, elapsed_time);
     
-    // Create performance result
     PerfResult result;
     result.gpuName = gpuName;
     result.implementation = implName;
@@ -566,7 +540,6 @@ PerfResult runBenchmark(const char* gpuName, const char* implName,
     return result;
 }
 
-// Save results to a CSV file for later chart generation
 void saveResultsToCSV(const std::vector<PerfResult>& results, const char* filename) {
     std::ofstream file(filename);
     if (!file.is_open()) {
@@ -574,10 +547,8 @@ void saveResultsToCSV(const std::vector<PerfResult>& results, const char* filena
         return;
     }
     
-    // Write CSV header
     file << "GPU,Implementation,M,N,K,Time_ms,Throughput_GFlops\n";
     
-    // Write results
     for (const auto& result : results) {
         file << result.gpuName << ","
              << result.implementation << ","
@@ -594,32 +565,26 @@ void saveResultsToCSV(const std::vector<PerfResult>& results, const char* filena
 // =============== MAIN FUNCTION ===============
 
 int main(int argc, char** argv) {
-    // Parse command line arguments
     std::string targetGPU = "";  // Empty string means all GPUs
     parseArgs(argc, argv, targetGPU);
     
-    // Detect available GPUs
     std::vector<GPUInfo> gpus = detectGPUs();
     std::vector<PerfResult> allResults;
     
-    // If no GPUs found, exit
     if (gpus.empty()) {
         fprintf(stderr, "No CUDA-capable devices found\n");
         return EXIT_FAILURE;
     }
     
-    // Print detected GPUs
     printf("Detected GPUs:\n");
     for (const auto& gpu : gpus) {
         printf("  %s (SM %d.%d)\n", gpu.name, gpu.major, gpu.minor);
     }
     
-    // Filter by target GPU if specified
     if (!targetGPU.empty()) {
         printf("\nFiltering to run only on: %s\n", targetGPU.c_str());
     }
     
-    // Define matrix sizes to test
     struct MatrixSize {
         int m, n, k;
         const char* name;
@@ -634,7 +599,6 @@ int main(int argc, char** argv) {
     
     // Loop through each GPU
     for (const auto& gpu : gpus) {
-        // Skip if not a target GPU or if we're filtering by name and it doesn't match
         if (!isTargetGPU(gpu.name) || (!targetGPU.empty() && strstr(gpu.name, targetGPU.c_str()) == NULL)) {
             printf("Skipping GPU: %s (not selected for testing)\n", gpu.name);
             continue;
@@ -642,7 +606,6 @@ int main(int argc, char** argv) {
         
         printf("\n=== Testing on GPU: %s ===\n", gpu.name);
         
-        // Set the current device
         int deviceId = -1;
         for (int i = 0; i < gpus.size(); i++) {
             if (strcmp(gpu.name, gpus[i].name) == 0) {
@@ -658,11 +621,9 @@ int main(int argc, char** argv) {
         
         cudaSetDevice(deviceId);
         
-        // Initialize cuBLAS
         cublasHandle_t cublasHandle;
         checkCublasError(cublasCreate(&cublasHandle), "Creating cuBLAS handle");
         
-        // Loop through each matrix size
         for (const auto& size : sizes) {
             int m = size.m;
             int n = size.n;
@@ -670,26 +631,21 @@ int main(int argc, char** argv) {
             
             printf("\n--- Testing %s matrices ---\n", size.name);
             
-            // Skip large matrices for specific implementations (too slow or too memory intensive)
             bool isLargeMatrix = (m >= LARGE_SIZE || n >= LARGE_SIZE || k >= LARGE_SIZE);
             
-            // Allocate host memory
             float *h_a = (float*)malloc(m * k * sizeof(float));
             float *h_b = (float*)malloc(k * n * sizeof(float));
             float *h_c = (float*)malloc(m * n * sizeof(float));
             half *h_a_half = (half*)malloc(m * k * sizeof(half));
             half *h_b_half = (half*)malloc(k * n * sizeof(half));
             
-            // Initialize matrices
-            srand(42);  // Use fixed seed for reproducibility
+            srand(42);  
             initializeMatrix(h_a, m, k);
             initializeMatrix(h_b, k, n);
             
-            // Convert to half precision for tensor cores
             convertToHalf(h_a, h_a_half, m * k);
             convertToHalf(h_b, h_b_half, k * n);
             
-            // Allocate device memory
             float *d_a, *d_b, *d_c;
             half *d_a_half, *d_b_half;
             
@@ -705,82 +661,65 @@ int main(int argc, char** argv) {
             checkCudaError(cudaMalloc(&d_a_half, bytes_a_half), "Allocating d_a_half");
             checkCudaError(cudaMalloc(&d_b_half, bytes_b_half), "Allocating d_b_half");
             
-            // Copy data to device
             checkCudaError(cudaMemcpy(d_a, h_a, bytes_a, cudaMemcpyHostToDevice), "Copying h_a to d_a");
             checkCudaError(cudaMemcpy(d_b, h_b, bytes_b, cudaMemcpyHostToDevice), "Copying h_b to d_b");
             checkCudaError(cudaMemcpy(d_a_half, h_a_half, bytes_a_half, cudaMemcpyHostToDevice), "Copying h_a_half to d_a_half");
             checkCudaError(cudaMemcpy(d_b_half, h_b_half, bytes_b_half, cudaMemcpyHostToDevice), "Copying h_b_half to d_b_half");
             
-            // Set up parameter structures for benchmarks
             NaiveParams naiveParams = {d_a, d_b, d_c};
             SharedParams sharedParams = {d_a, d_b, d_c};
             TensorParams tensorParams = {d_a_half, d_b_half, d_c};
             CublasParams cublasParams = {cublasHandle, d_a, d_b, d_c};
             CutlassParams cutlassParams = {d_a, d_b, d_c};
             
-            // Skip large matrices for naive implementation (too slow)
             if (!isLargeMatrix) {
-                // Run and record naive implementation
                 PerfResult naiveResult = runBenchmark(gpu.name, "Naive", naiveBenchmark, &naiveParams, m, n, k, true);
                 allResults.push_back(naiveResult);
                 
-                // Verify results
                 checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (naive)");
                 printf("Naive verification: %s\n", verifyResults(h_a, h_b, h_c, m, n, k) ? "PASSED" : "FAILED");
             }
             
-            // Run and record shared memory implementation
             PerfResult sharedResult = runBenchmark(gpu.name, "Shared Memory", sharedBenchmark, &sharedParams, m, n, k, true);
             allResults.push_back(sharedResult);
             
-            // Verify results
             checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (shared)");
             printf("Shared memory verification: %s\n", verifyResults(h_a, h_b, h_c, m, n, k) ? "PASSED" : "FAILED");
             
-            // Run tensor cores implementation if GPU supports it
             if (gpu.hasTensorCores) {
                 PerfResult tensorResult = runBenchmark(gpu.name, "Tensor Cores", tensorBenchmark, &tensorParams, m, n, k, true);
                 allResults.push_back(tensorResult);
                 
-                // Verify results
                 checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (tensor)");
                 printf("Tensor cores verification: %s\n", verifyResults(h_a, h_b, h_c, m, n, k) ? "PASSED" : "FAILED");
             }
             
-            // Run cuBLAS implementation
             PerfResult cublasResult = runBenchmark(gpu.name, "cuBLAS", cublasBenchmark, &cublasParams, m, n, k, true);
             allResults.push_back(cublasResult);
             
-            // Verify results
             checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (cuBLAS)");
             printf("cuBLAS verification: %s\n", verifyResults(h_a, h_b, h_c, m, n, k) ? "PASSED" : "FAILED");
             
-            // Run CUTLASS implementation
             PerfResult cutlassResult = runBenchmark(gpu.name, "CUTLASS", cutlassBenchmark, &cutlassParams, m, n, k, true);
             allResults.push_back(cutlassResult);
             
-            // Verify results
             checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (CUTLASS)");
             printf("CUTLASS verification: %s\n", verifyResults(h_a, h_b, h_c, m, n, k) ? "PASSED" : "FAILED");
             
-            // Run CUTLASS Tensor Core implementation if GPU supports it
             if (gpu.hasTensorCores) {
                 PerfResult cutlassTensorResult = runBenchmark(gpu.name, "CUTLASS Tensor Cores", cutlassTensorBenchmark, &cutlassParams, m, n, k, true);
                 allResults.push_back(cutlassTensorResult);
                 
-                // Verify results
                 checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (CUTLASS Tensor)");
                 printf("CUTLASS Tensor verification: %s\n", verifyResults(h_a, h_b, h_c, m, n, k) ? "PASSED" : "FAILED");
             }
             
-            // Free device memory
             cudaFree(d_a);
             cudaFree(d_b);
             cudaFree(d_c);
             cudaFree(d_a_half);
             cudaFree(d_b_half);
             
-            // Free host memory
             free(h_a);
             free(h_b);
             free(h_c);
@@ -788,21 +727,17 @@ int main(int argc, char** argv) {
             free(h_b_half);
         }
         
-        // Destroy cuBLAS handle
         cublasDestroy(cublasHandle);
     }
     
-    // Generate a filename that includes the GPU name if specified
     std::string csvFilename = "matrix_mul_performance";
     if (!targetGPU.empty()) {
-        // Replace spaces with underscores for the filename
         std::string gpuNameForFile = targetGPU;
         std::replace(gpuNameForFile.begin(), gpuNameForFile.end(), ' ', '_');
         csvFilename += "_" + gpuNameForFile;
     }
     csvFilename += ".csv";
     
-    // Save results to CSV for later chart generation
     saveResultsToCSV(allResults, csvFilename.c_str());
     
     printf("\nResults saved to %s. Use this file to generate charts.\n", csvFilename.c_str());

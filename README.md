@@ -23,10 +23,10 @@ A comprehensive benchmark for comparing matrix multiplication performance across
 
 ```bash
 # Basic compilation
-nvcc -o matrix_mul_benchmark matrix_mul_benchmark.cu -lcublas -O3 -arch=sm_70
+nvcc -o matrix_multiplication matrix_multiplication.cu -lcublas -O3 -arch=sm_70
 
 # For CUTLASS support
-nvcc -o matrix_mul_benchmark matrix_mul_benchmark.cu -lcublas -I/path/to/cutlass/include -O3 -arch=sm_70
+nvcc -o matrix_multiplication matrix_multiplication.cu -lcublas -I/path/to/cutlass/include -O3 -arch=sm_70
 ```
 
 ## Usage Instructions
@@ -35,12 +35,12 @@ nvcc -o matrix_mul_benchmark matrix_mul_benchmark.cu -lcublas -I/path/to/cutlass
 
 ```bash
 # Run on all available GPUs
-./matrix_mul_benchmark
+./matrix_multiplication
 
 # Run on a specific GPU type
-./matrix_mul_benchmark --gpu "RTX 2080 Ti"
-./matrix_mul_benchmark --gpu "A100"
-./matrix_mul_benchmark --gpu "H100"
+./matrix_multiplication --gpu "RTX 2080 Ti"
+./matrix_multiplication --gpu "A100"
+./matrix_multiplication --gpu "H100"
 ```
 
 ### Running on Specific GPU Types with Direct Access
@@ -57,13 +57,13 @@ CUDA_VISIBLE_DEVICES=1 ./matrix_mul_benchmark
 #### Option 2: SSH into specific machines
 ```bash
 # SSH to machine with RTX 2080 Ti
-ssh rtx2080ti-node "cd /path/to/benchmark && ./matrix_mul_benchmark"
+ssh rtx2080ti-node "cd /path/to/benchmark && ./matrix_multiplication"
 
 # SSH to machine with A100
-ssh a100-node "cd /path/to/benchmark && ./matrix_mul_benchmark"
+ssh a100-node "cd /path/to/benchmark && ./matrix_multiplication"
 
 # SSH to machine with H100
-ssh h100-node "cd /path/to/benchmark && ./matrix_mul_benchmark"
+ssh h100-node "cd /path/to/benchmark && ./matrix_multiplication"
 ```
 
 ### Running on UVA HPC with Slurm
