@@ -5,15 +5,23 @@
  * 1. Naive implementation
  * 2. Shared memory optimization
  * 3. Shared Memory with Swizzling implementation (from Colfax post)
- * 4. Vectorized Memory Access with Transposition (from Lei Mao's blog)
- * 5. Warp Shuffle implementation (using direct register-to-register transfers)
+ * 4. Vectorized Memory Access with Transposition - Using float4 for coalesced memory access
+ * 5. Warp Shuffle implementation - Using __shfl_sync for direct register-to-register transfers
+ * 6. cuBLAS implementation - Using NVIDIA's optimized library
+ * 7. CuTe implementations - Using NVIDIA's CUDA Template Library:
+ *    - Naive CuTe implementation
+ *    - Shared memory CuTe implementation
+ *    - Swizzled CuTe implementation
  *
- * Includes timing code to measure performance.
+ * Includes timing code to measure performance and throughput calculations in GB/s.
+ * Tests various matrix sizes: 32x32, 1024x1024, 8192x8192, and non-square 1024x2048.
  * 
  * References:
  * - Colfax Research: https://research.colfax-intl.com/tutorial-matrix-transpose-in-cutlass/
  * - Lei Mao's Blog: https://leimao.github.io/article/CUDA-Matrix-Multiplication-Optimization/
+ *                   https://leimao.github.io/article/CuTe-Matrix-Transpose/#Introduction
  * - NVIDIA Developer Blog: https://developer.nvidia.com/blog/using-cuda-warp-level-primitives/
+ * - NVIDIA CuTe Documentation: https://github.com/NVIDIA/cutlass/tree/master/cute
  */
 
 #include <stdio.h>
