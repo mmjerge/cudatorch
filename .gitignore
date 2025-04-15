@@ -41,3 +41,9 @@ matrix_mul_1024x1024x1024_NVIDIA_GeForce_RTX_2080_Ti.csv
 matrix_mul_1024x2048x1024_NVIDIA_GeForce_RTX_2080_Ti.csv
 matrix_mul_8192x8192x8192_NVIDIA_GeForce_RTX_2080_Ti.csv
 matrix_mul_performance.csv
+
+profiling/cute
+profiling/profile_report.nsys-rep
+profiling/profile_report_transpose.nsys-rep
+
+results/transpose/matrix_transpose_bench_*.err
