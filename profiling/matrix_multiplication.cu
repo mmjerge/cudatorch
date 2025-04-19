@@ -7,9 +7,10 @@
  * 3. Tensor cores (WMMA) implementation
  * 4. cuBLAS implementation
  * 5. CUTLASS implementation
+ * 6. Sparse matrix (cuSPARSE) implementation
  *
  * Benchmarking across RTX 2080 Ti, A100, and H100 GPUs
- * Testing different matrix sizes and measuring throughput
+ * Testing different matrix sizes and sparsity patterns
  */
 
  #include <stdio.h>
@@ -21,8 +22,11 @@
  #include <vector>
  #include <string>
  #include <fstream>
- #include <algorithm>
+ #include <algorithm>  // For std::sort, std::shuffle
+ #include <utility>    // For std::pair
+ #include <random>     // For std::default_random_engine
  #include <cublas_v2.h>
+ #include <cusparse.h>  // Added for sparse matrix operations
  #include <string.h>
  #include <getopt.h>
  #include <time.h>
@@ -30,14 +34,30 @@
  // For CUTLASS implementation
  #include <cutlass/gemm/device/gemm.h>
  
+ // Matrix size definitions
  #define SMALL_SIZE 32
  #define MEDIUM_SIZE 1024
  #define LARGE_SIZE 8192
+ #define XLARGE_SIZE 16384  // Added extra large size
+ 
+ // Non-square matrix dimensions
  #define NON_SQUARE_M 1024
  #define NON_SQUARE_N 2048
  #define NON_SQUARE_K 1024
+ 
+ // Verification sample counts
  #define VERIFICATION_SAMPLE_COUNT 100  // Number of random points to verify for large matrices
  #define NON_SQUARE_VERIFICATION_SAMPLE_COUNT 1000  // More samples for non-square matrices
+ 
+ // Sparse matrix parameters
+ #define DENSITY_HIGH 0.5    // 50% non-zero elements
+ #define DENSITY_MEDIUM 0.1  // 10% non-zero elements
+ #define DENSITY_LOW 0.01    // 1% non-zero elements
+ 
+ // Forward declarations of helper functions
+ void checkCudaError(cudaError_t error, const char *message);
+ void checkCublasError(cublasStatus_t status, const char *message);
+ void checkCusparseError(cusparseStatus_t status, const char *message);
  
  struct GPUInfo {
      char name[256];
@@ -52,6 +72,7 @@
      int m;
      int n;
      int k;
+     float density;          // Added for sparse matrices (density = % of non-zeros)
      float executionTimeMs;
      float throughputGFlops;
      std::string verificationResult;
@@ -148,6 +169,204 @@
          
          store_matrix_sync(c + warpM * WMMA_M * n + warpN * WMMA_N, c_frag, n, nvcuda::wmma::mem_row_major);
      }
+ }
+ 
+ // =============== SPARSE MATRIX SUPPORT ===============
+ 
+ // Structure to hold CSR format sparse matrix
+ struct CSRMatrix {
+     int m;                  // Number of rows
+     int n;                  // Number of columns
+     int nnz;                // Number of non-zero elements
+     float *values;          // Array of non-zero values
+     int *rowPtrs;           // Array of row pointers (size m+1)
+     int *colIndices;        // Array of column indices
+     float density;          // Density (fraction of non-zero elements)
+     
+     // Constructor
+     CSRMatrix() : m(0), n(0), nnz(0), values(nullptr), rowPtrs(nullptr), colIndices(nullptr), density(0.0f) {}
+     
+     // Destructor - checking CUDA errors here would be good practice but can cause issues in destructors
+     ~CSRMatrix() {
+         if (values) {
+             cudaFree(values);
+             values = nullptr;
+         }
+         if (rowPtrs) {
+             cudaFree(rowPtrs);
+             rowPtrs = nullptr;
+         }
+         if (colIndices) {
+             cudaFree(colIndices);
+             colIndices = nullptr;
+         }
+     }
+ };
+ 
+ // Convert a dense matrix to CSR format on the device
+ CSRMatrix* convertDenseToCSR(float *d_dense, int m, int n, float targetDensity) {
+     printf("Converting %dx%d dense matrix to CSR format with target density %.4f\n", m, n, targetDensity);
+     
+     // Allocate host memory for the dense matrix
+     float *h_dense = (float*)malloc(m * n * sizeof(float));
+     checkCudaError(cudaMemcpy(h_dense, d_dense, m * n * sizeof(float), cudaMemcpyDeviceToHost), 
+                    "Copying dense matrix from device to host");
+     
+     // Create a temporary CSR matrix on the host
+     int maxNnz = static_cast<int>(m * n * targetDensity);
+     float *h_values = (float*)malloc(maxNnz * sizeof(float));
+     int *h_rowPtrs = (int*)malloc((m + 1) * sizeof(int));
+     int *h_colIndices = (int*)malloc(maxNnz * sizeof(int));
+     
+     // Convert to CSR format with target density
+     h_rowPtrs[0] = 0;
+     int nnz = 0;
+     
+     for (int i = 0; i < m; i++) {
+         for (int j = 0; j < n; j++) {
+             // Use a probability threshold based on target density
+             float val = h_dense[i * n + j];
+             float prob = static_cast<float>(rand()) / RAND_MAX;
+             
+             if (prob < targetDensity && val != 0.0f) {
+                 h_values[nnz] = val;
+                 h_colIndices[nnz] = j;
+                 nnz++;
+                 
+                 if (nnz >= maxNnz) {
+                     // We've reached the maximum allowed number of non-zeros
+                     // Complete the rest of the row pointers and break
+                     for (int k = i + 1; k <= m; k++) {
+                         h_rowPtrs[k] = nnz;
+                     }
+                     goto done_conversion;
+                 }
+             }
+         }
+         h_rowPtrs[i + 1] = nnz;
+     }
+     
+ done_conversion:
+     // Calculate actual density
+     float actualDensity = static_cast<float>(nnz) / (m * n);
+     printf("Converted to CSR format with %d non-zeros (actual density: %.4f)\n", nnz, actualDensity);
+     
+     // Create and fill the CSR matrix structure
+     CSRMatrix *csrMatrix = new CSRMatrix();
+     csrMatrix->m = m;
+     csrMatrix->n = n;
+     csrMatrix->nnz = nnz;
+     csrMatrix->density = actualDensity;
+     
+     // Allocate device memory for CSR format
+     checkCudaError(cudaMalloc(&csrMatrix->values, nnz * sizeof(float)), "Allocating CSR values");
+     checkCudaError(cudaMalloc(&csrMatrix->rowPtrs, (m + 1) * sizeof(int)), "Allocating CSR row pointers");
+     checkCudaError(cudaMalloc(&csrMatrix->colIndices, nnz * sizeof(int)), "Allocating CSR column indices");
+     
+     // Copy CSR data to device
+     checkCudaError(cudaMemcpy(csrMatrix->values, h_values, nnz * sizeof(float), cudaMemcpyHostToDevice),
+                    "Copying CSR values to device");
+     checkCudaError(cudaMemcpy(csrMatrix->rowPtrs, h_rowPtrs, (m + 1) * sizeof(int), cudaMemcpyHostToDevice),
+                    "Copying CSR row pointers to device");
+     checkCudaError(cudaMemcpy(csrMatrix->colIndices, h_colIndices, nnz * sizeof(int), cudaMemcpyHostToDevice),
+                    "Copying CSR column indices to device");
+     
+     // Free host memory
+     free(h_dense);
+     free(h_values);
+     free(h_rowPtrs);
+     free(h_colIndices);
+     
+     return csrMatrix;
+ }
+ 
+ // Generate a random sparse matrix directly in CSR format
+ CSRMatrix* generateRandomCSRMatrix(int m, int n, float density) {
+     printf("Generating random %dx%d sparse matrix with density %.4f\n", m, n, density);
+     
+     // Calculate the number of non-zero elements based on density
+     int targetNnz = static_cast<int>(m * n * density);
+     int maxNnz = std::min(targetNnz, m * n); // Cannot have more non-zeros than matrix elements
+     
+     // Allocate host memory
+     float *h_values = (float*)malloc(maxNnz * sizeof(float));
+     int *h_rowPtrs = (int*)malloc((m + 1) * sizeof(int));
+     int *h_colIndices = (int*)malloc(maxNnz * sizeof(int));
+     
+     // Initialize row pointers
+     h_rowPtrs[0] = 0;
+     
+     // Generate random sparse matrix
+     int nnz = 0;
+     std::vector<std::pair<int, float>> rowElements;
+     
+     for (int i = 0; i < m; i++) {
+         rowElements.clear();
+         
+         // Determine number of non-zeros for this row
+         int rowNnz = static_cast<int>(n * density);
+         rowNnz = std::min(rowNnz, n); // Cannot have more non-zeros than columns
+         
+         // Generate random column indices for this row
+         std::vector<int> cols;
+         for (int j = 0; j < n; j++) {
+             cols.push_back(j);
+         }
+         // Use a random engine with fixed seed for reproducibility
+         static std::default_random_engine rng(42);
+         std::shuffle(cols.begin(), cols.end(), rng);
+         
+         // Take only the first rowNnz columns
+         for (int j = 0; j < rowNnz; j++) {
+             float value = static_cast<float>(rand()) / RAND_MAX;
+             rowElements.push_back(std::make_pair(cols[j], value));
+         }
+         
+         // Sort by column index
+         std::sort(rowElements.begin(), rowElements.end());
+         
+         // Add to CSR arrays
+         for (const auto& elem : rowElements) {
+             if (nnz < maxNnz) {
+                 h_colIndices[nnz] = elem.first;
+                 h_values[nnz] = elem.second;
+                 nnz++;
+             }
+         }
+         
+         h_rowPtrs[i + 1] = nnz;
+     }
+     
+     // Calculate actual density
+     float actualDensity = static_cast<float>(nnz) / (m * n);
+     printf("Generated CSR matrix with %d non-zeros (actual density: %.4f)\n", nnz, actualDensity);
+     
+     // Create and fill the CSR matrix structure
+     CSRMatrix *csrMatrix = new CSRMatrix();
+     csrMatrix->m = m;
+     csrMatrix->n = n;
+     csrMatrix->nnz = nnz;
+     csrMatrix->density = actualDensity;
+     
+     // Allocate device memory for CSR format
+     checkCudaError(cudaMalloc(&csrMatrix->values, nnz * sizeof(float)), "Allocating CSR values");
+     checkCudaError(cudaMalloc(&csrMatrix->rowPtrs, (m + 1) * sizeof(int)), "Allocating CSR row pointers");
+     checkCudaError(cudaMalloc(&csrMatrix->colIndices, nnz * sizeof(int)), "Allocating CSR column indices");
+     
+     // Copy CSR data to device
+     checkCudaError(cudaMemcpy(csrMatrix->values, h_values, nnz * sizeof(float), cudaMemcpyHostToDevice),
+                    "Copying CSR values to device");
+     checkCudaError(cudaMemcpy(csrMatrix->rowPtrs, h_rowPtrs, (m + 1) * sizeof(int), cudaMemcpyHostToDevice),
+                    "Copying CSR row pointers to device");
+     checkCudaError(cudaMemcpy(csrMatrix->colIndices, h_colIndices, nnz * sizeof(int), cudaMemcpyHostToDevice),
+                    "Copying CSR column indices to device");
+     
+     // Free host memory
+     free(h_values);
+     free(h_rowPtrs);
+     free(h_colIndices);
+     
+     return csrMatrix;
  }
  
  // =============== CUTLASS IMPLEMENTATION ===============
@@ -304,6 +523,7 @@
  
  // =============== HELPER FUNCTIONS ===============
  
+ // Implementation of the function declarations
  void checkCudaError(cudaError_t error, const char *message) {
      if (error != cudaSuccess) {
          fprintf(stderr, "CUDA error: %s: %s\n", message, cudaGetErrorString(error));
@@ -314,6 +534,13 @@
  void checkCublasError(cublasStatus_t status, const char *message) {
      if (status != CUBLAS_STATUS_SUCCESS) {
          fprintf(stderr, "cuBLAS error: %s: %d\n", message, status);
+         exit(EXIT_FAILURE);
+     }
+ }
+ 
+ void checkCusparseError(cusparseStatus_t status, const char *message) {
+     if (status != CUSPARSE_STATUS_SUCCESS) {
+         fprintf(stderr, "cuSPARSE error: %s: %d\n", message, status);
          exit(EXIT_FAILURE);
      }
  }
@@ -379,6 +606,31 @@
      return true;
  }
  
+ // Verify sparse matrix multiplication results against dense computation
+ bool verifySparseResults(float *a, float *b, float *c, int m, int n, int k, int samples, float epsilon) {
+     srand(42);  // Use fixed seed for reproducibility
+     
+     printf("Performing sparse verification with %d random samples...\n", samples);
+     
+     for (int s = 0; s < samples; s++) {
+         int i = rand() % m;
+         int j = rand() % n;
+         
+         float expected = 0.0f;
+         for (int p = 0; p < k; p++) {
+             expected += a[i * k + p] * b[p * n + j];
+         }
+         
+         if (fabs(expected - c[i * n + j]) > epsilon) {
+             printf("Sparse verification failed at [%d, %d]: Expected %f, got %f\n", 
+                    i, j, expected, c[i * n + j]);
+             return false;
+         }
+     }
+     
+     return true;
+ }
+ 
  // Global flags for verification settings
  bool g_fullVerifyNonSquare = false;
  int g_nonSquareSampleCount = NON_SQUARE_VERIFICATION_SAMPLE_COUNT;
@@ -417,6 +669,16 @@
      return operations / (timeS * 1e9);
  }
  
+ // Calculate GFLOPs for sparse matrix multiplication
+ float calculateSparseGFlops(int m, int n, int k, float density, float timeMs) {
+     // For sparse matrix multiplication, we only perform operations for non-zero elements
+     // Approx number of non-zeros in A = m * k * density
+     // Each row in C requires k operations
+     float operations = 2.0f * static_cast<float>(m) * static_cast<float>(n) * static_cast<float>(k) * density;
+     float timeS = timeMs / 1000.0f;
+     return operations / (timeS * 1e9);
+ }
+ 
  // Detect available GPUs and return their info
  std::vector<GPUInfo> detectGPUs() {
      int deviceCount = 0;
@@ -448,11 +710,14 @@
  }
  
  // Function to parse command line arguments
- void parseArgs(int argc, char **argv, std::string &targetGPU, bool &fullVerifyNonSquare, int &nonSquareSampleCount) {
+ void parseArgs(int argc, char **argv, std::string &targetGPU, bool &fullVerifyNonSquare, 
+                int &nonSquareSampleCount, bool &testSparse, bool &testXLarge) {
      const struct option long_options[] = {
          {"gpu", required_argument, 0, 'g'},
          {"full-verify", no_argument, 0, 'f'},
          {"samples", required_argument, 0, 's'},
+         {"sparse", no_argument, 0, 'p'},
+         {"xlarge", no_argument, 0, 'x'},
          {"help", no_argument, 0, 'h'},
          {0, 0, 0, 0}
      };
@@ -460,7 +725,7 @@
      int opt;
      int option_index = 0;
      
-     while ((opt = getopt_long(argc, argv, "g:fs:h", long_options, &option_index)) != -1) {
+     while ((opt = getopt_long(argc, argv, "g:fs:pxh", long_options, &option_index)) != -1) {
          switch (opt) {
              case 'g':
                  targetGPU = optarg;
@@ -471,6 +736,12 @@
              case 's':
                  nonSquareSampleCount = atoi(optarg);
                  break;
+             case 'p':
+                 testSparse = true;
+                 break;
+             case 'x':
+                 testXLarge = true;
+                 break;
              case 'h':
                  printf("Usage: %s [OPTIONS]\n", argv[0]);
                  printf("Options:\n");
@@ -478,6 +749,8 @@
                  printf("  -f, --full-verify     Use full verification for non-square matrices\n");
                  printf("  -s, --samples=COUNT   Number of samples to use for non-square matrix verification (default: %d)\n", 
                         NON_SQUARE_VERIFICATION_SAMPLE_COUNT);
+                 printf("  -p, --sparse          Include sparse matrix multiplication tests\n");
+                 printf("  -x, --xlarge          Include extra large matrix sizes\n");
                  printf("  -h, --help            Display this help message\n");
                  exit(0);
              default:
@@ -504,6 +777,63 @@
                       "Executing cuBLAS SGEMM");
  }
  
+ // =============== CUSPARSE IMPLEMENTATION ===============
+ 
+ void matrixMulCusparse(cusparseHandle_t handle, CSRMatrix *a_csr, float *d_b, float *d_c, int m, int n, int k) {
+     const float alpha = 1.0f;
+     const float beta = 0.0f;
+     
+     // Create matrix descriptors
+     cusparseSpMatDescr_t matA;
+     cusparseDnMatDescr_t matB, matC;
+     
+     // Create sparse matrix A in CSR format
+     checkCusparseError(
+         cusparseCreateCsr(&matA, m, k, a_csr->nnz,
+                           a_csr->rowPtrs, a_csr->colIndices, a_csr->values,
+                           CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                           CUSPARSE_INDEX_BASE_ZERO, CUDA_R_32F),
+         "Creating sparse matrix descriptor for A"
+     );
+     
+     // Create dense matrix B
+     checkCusparseError(
+         cusparseCreateDnMat(&matB, k, n, n, d_b, CUDA_R_32F, CUSPARSE_ORDER_ROW),
+         "Creating dense matrix descriptor for B"
+     );
+     
+     // Create dense matrix C
+     checkCusparseError(
+         cusparseCreateDnMat(&matC, m, n, n, d_c, CUDA_R_32F, CUSPARSE_ORDER_ROW),
+         "Creating dense matrix descriptor for C"
+     );
+     
+     // Get buffer size for SpMM
+     size_t bufferSize = 0;
+     checkCusparseError(
+         cusparseSpMM_bufferSize(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                &alpha, matA, matB, &beta, matC, CUDA_R_32F, CUSPARSE_SPMM_ALG_DEFAULT, &bufferSize),
+         "Getting buffer size for SpMM"
+     );
+     
+     // Allocate buffer
+     void *dBuffer = nullptr;
+     checkCudaError(cudaMalloc(&dBuffer, bufferSize), "Allocating work buffer for SpMM");
+     
+     // Execute sparse matrix-dense matrix multiplication
+     checkCusparseError(
+         cusparseSpMM(handle, CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                     &alpha, matA, matB, &beta, matC, CUDA_R_32F, CUSPARSE_SPMM_ALG_DEFAULT, dBuffer),
+         "Executing cusparseSpMM"
+     );
+     
+     // Free resources
+     cusparseDestroySpMat(matA);
+     cusparseDestroyDnMat(matB);
+     cusparseDestroyDnMat(matC);
+     cudaFree(dBuffer);
+ }
+ 
  // =============== TESTING FRAMEWORK ===============
  
  struct NaiveParams {
@@ -526,6 +856,12 @@
  
  struct CutlassParams {
      float *d_a, *d_b, *d_c;
+ };
+ 
+ struct SparseParams {
+     cusparseHandle_t handle;
+     CSRMatrix *a_csr;
+     float *d_b, *d_c;
  };
  
  void naiveBenchmark(void* p, int m, int n, int k) {
@@ -573,9 +909,15 @@
      cudaDeviceSynchronize();
  }
  
+ void sparseBenchmark(void* p, int m, int n, int k) {
+     SparseParams* params = (SparseParams*)p;
+     matrixMulCusparse(params->handle, params->a_csr, params->d_b, params->d_c, m, n, k);
+     cudaDeviceSynchronize();
+ }
+ 
  PerfResult runBenchmark(const char* gpuName, const char* implName, 
                        void (*benchmark)(void*, int, int, int), 
-                       void* params, int m, int n, int k, bool isTensorCore) {
+                       void* params, int m, int n, int k, float density, bool isTensorCore) {
      
      cudaEvent_t start, stop;
      cudaEventCreate(&start);
@@ -599,7 +941,10 @@
      cudaEventDestroy(start);
      cudaEventDestroy(stop);
      
-     float gflops = calculateGFlops(m, n, k, elapsed_time);
+     // Calculate GFLOPs - use sparse calculation if density < 1.0
+     float gflops = (density < 1.0) ? 
+                    calculateSparseGFlops(m, n, k, density, elapsed_time) : 
+                    calculateGFlops(m, n, k, elapsed_time);
      
      PerfResult result;
      result.gpuName = gpuName;
@@ -607,12 +952,19 @@
      result.m = m;
      result.n = n;
      result.k = k;
+     result.density = density;
      result.executionTimeMs = elapsed_time;
      result.throughputGFlops = gflops;
      result.verificationResult = "Pending";
      
-     printf("%-15s %-25s %5d x %5d x %5d: %10.2f ms (%10.2f GFlops)\n", 
-            gpuName, implName, m, n, k, elapsed_time, gflops);
+     // Add density information to output if sparse
+     if (density < 1.0) {
+         printf("%-15s %-25s %5d x %5d x %5d (%.2f%%): %10.2f ms (%10.2f GFlops)\n", 
+                gpuName, implName, m, n, k, density * 100.0f, elapsed_time, gflops);
+     } else {
+         printf("%-15s %-25s %5d x %5d x %5d: %10.2f ms (%10.2f GFlops)\n", 
+                gpuName, implName, m, n, k, elapsed_time, gflops);
+     }
      
      return result;
  }
@@ -624,7 +976,7 @@
          return;
      }
      
-     file << "GPU,Implementation,M,N,K,Time_ms,Throughput_GFlops,Verification\n";
+     file << "GPU,Implementation,M,N,K,Density,Time_ms,Throughput_GFlops,Verification\n";
      
      for (const auto& result : results) {
          file << result.gpuName << ","
@@ -632,6 +984,7 @@
               << result.m << ","
               << result.n << ","
               << result.k << ","
+              << result.density << ","
               << result.executionTimeMs << ","
               << result.throughputGFlops << ","
               << result.verificationResult << "\n";
@@ -647,8 +1000,10 @@
      std::string targetGPU = "";  // Empty string means all GPUs
      bool fullVerifyNonSquare = false;
      int nonSquareSampleCount = NON_SQUARE_VERIFICATION_SAMPLE_COUNT;
+     bool testSparse = false;
+     bool testXLarge = false;
      
-     parseArgs(argc, argv, targetGPU, fullVerifyNonSquare, nonSquareSampleCount);
+     parseArgs(argc, argv, targetGPU, fullVerifyNonSquare, nonSquareSampleCount, testSparse, testXLarge);
      
      // Set global verification settings
      g_fullVerifyNonSquare = fullVerifyNonSquare;
@@ -658,6 +1013,14 @@
          printf("Using full verification for non-square matrices\n");
      } else {
          printf("Using partial verification with %d samples for non-square matrices\n", nonSquareSampleCount);
+     }
+     
+     if (testSparse) {
+         printf("Including sparse matrix multiplication tests\n");
+     }
+     
+     if (testXLarge) {
+         printf("Including extra large matrix size tests (16384x16384)\n");
      }
      
      std::vector<GPUInfo> gpus = detectGPUs();
@@ -670,7 +1033,8 @@
      
      printf("Detected GPUs:\n");
      for (const auto& gpu : gpus) {
-         printf("  %s (SM %d.%d)\n", gpu.name, gpu.major, gpu.minor);
+         printf("  %s (SM %d.%d)%s\n", gpu.name, gpu.major, gpu.minor, 
+                gpu.hasTensorCores ? " - Tensor Cores supported" : "");
      }
      
      if (!targetGPU.empty()) {
@@ -682,11 +1046,24 @@
          const char* name;
      };
      
-     MatrixSize sizes[] = {
+     // Define matrix sizes to test
+     std::vector<MatrixSize> sizes = {
          {SMALL_SIZE, SMALL_SIZE, SMALL_SIZE, "Small (32x32)"},
          {MEDIUM_SIZE, MEDIUM_SIZE, MEDIUM_SIZE, "Medium (1024x1024)"},
          {LARGE_SIZE, LARGE_SIZE, LARGE_SIZE, "Large (8192x8192)"},
-         {NON_SQUARE_M, NON_SQUARE_N, NON_SQUARE_K, "Non-square (1024x2048)"}
+         {NON_SQUARE_M, NON_SQUARE_N, NON_SQUARE_K, "Non-square (1024x2048x1024)"}
+     };
+     
+     // Add extra large size if requested
+     if (testXLarge) {
+         sizes.push_back({XLARGE_SIZE, XLARGE_SIZE, XLARGE_SIZE, "XLarge (16384x16384)"});
+     }
+     
+     // Define sparsity levels to test
+     std::vector<float> sparsityLevels = {
+         DENSITY_HIGH,
+         DENSITY_MEDIUM,
+         DENSITY_LOW
      };
      
      // Loop through each GPU
@@ -713,9 +1090,16 @@
          
          cudaSetDevice(deviceId);
          
+         // Create cuBLAS and cuSPARSE handles
          cublasHandle_t cublasHandle;
          checkCublasError(cublasCreate(&cublasHandle), "Creating cuBLAS handle");
          
+         cusparseHandle_t cusparseHandle;
+         if (testSparse) {
+             checkCusparseError(cusparseCreate(&cusparseHandle), "Creating cuSPARSE handle");
+         }
+         
+         // Test each matrix size
          for (const auto& size : sizes) {
              int m = size.m;
              int n = size.n;
@@ -724,6 +1108,13 @@
              printf("\n--- Testing %s matrices ---\n", size.name);
              
              bool isLargeMatrix = (m >= LARGE_SIZE || n >= LARGE_SIZE || k >= LARGE_SIZE);
+             bool isXLargeMatrix = (m >= XLARGE_SIZE || n >= XLARGE_SIZE || k >= XLARGE_SIZE);
+             
+             // Skip extremely large tests for less powerful GPUs
+             if (isXLargeMatrix && (gpu.major < 7)) {
+                 printf("Skipping XLarge test for this GPU as it may run out of memory\n");
+                 continue;
+             }
              
              // Allocate host memory
              float *h_a = (float*)malloc(m * k * sizeof(float));
@@ -813,7 +1204,7 @@
              
              // Run naive implementation (skip for large matrices)
              if (!isLargeMatrix) {
-                 PerfResult naiveResult = runBenchmark(gpu.name, "Naive", naiveBenchmark, &naiveParams, m, n, k, false);
+                 PerfResult naiveResult = runBenchmark(gpu.name, "Naive", naiveBenchmark, &naiveParams, m, n, k, 1.0f, false);
                  
                  // Verify result
                  checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (naive)");
@@ -826,7 +1217,7 @@
              }
              
              // Run shared memory implementation
-             PerfResult sharedResult = runBenchmark(gpu.name, "Shared Memory", sharedBenchmark, &sharedParams, m, n, k, false);
+             PerfResult sharedResult = runBenchmark(gpu.name, "Shared Memory", sharedBenchmark, &sharedParams, m, n, k, 1.0f, false);
              
              // Verify result
              checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (shared)");
@@ -839,7 +1230,7 @@
              
              // Run tensor core implementation if available
              if (gpu.hasTensorCores) {
-                 PerfResult tensorResult = runBenchmark(gpu.name, "Tensor Cores", tensorBenchmark, &tensorParams, m, n, k, true);
+                 PerfResult tensorResult = runBenchmark(gpu.name, "Tensor Cores", tensorBenchmark, &tensorParams, m, n, k, 1.0f, true);
                  
                  // Verify result with higher tolerance
                  checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (tensor)");
@@ -852,7 +1243,7 @@
              }
              
              // Run cuBLAS implementation
-             PerfResult cublasResult = runBenchmark(gpu.name, "cuBLAS", cublasBenchmark, &cublasParams, m, n, k, false);
+             PerfResult cublasResult = runBenchmark(gpu.name, "cuBLAS", cublasBenchmark, &cublasParams, m, n, k, 1.0f, false);
              
              // Verify result
              checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (cuBLAS)");
@@ -864,7 +1255,7 @@
              allResults.push_back(cublasResult);
              
              // Run CUTLASS implementation
-             PerfResult cutlassResult = runBenchmark(gpu.name, "CUTLASS", cutlassBenchmark, &cutlassParams, m, n, k, false);
+             PerfResult cutlassResult = runBenchmark(gpu.name, "CUTLASS", cutlassBenchmark, &cutlassParams, m, n, k, 1.0f, false);
              
              // Verify result
              checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (CUTLASS)");
@@ -877,7 +1268,7 @@
              
              // Run CUTLASS Tensor Core implementation if available
              if (gpu.hasTensorCores) {
-                 PerfResult cutlassTensorResult = runBenchmark(gpu.name, "CUTLASS Tensor Cores", cutlassTensorBenchmark, &cutlassParams, m, n, k, true);
+                 PerfResult cutlassTensorResult = runBenchmark(gpu.name, "CUTLASS Tensor Cores", cutlassTensorBenchmark, &cutlassParams, m, n, k, 1.0f, true);
                  
                  // Verify result with higher tolerance
                  checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (CUTLASS Tensor)");
@@ -887,6 +1278,73 @@
                  
                  sizeResults.push_back(cutlassTensorResult);
                  allResults.push_back(cutlassTensorResult);
+             }
+             
+             // Run sparse matrix tests if requested
+             if (testSparse && !isXLargeMatrix) {  // Skip sparse for XLarge matrices
+                 printf("\n--- Running sparse matrix tests for %s matrices ---\n", size.name);
+                 
+                 for (float density : sparsityLevels) {
+                     printf("\n-- Testing with density %.2f%% --\n", density * 100.0f);
+                     
+                     // Create a sparse matrix with the specified density
+                     CSRMatrix *a_csr = generateRandomCSRMatrix(m, k, density);
+                     
+                     // Clear result matrix
+                     checkCudaError(cudaMemset(d_c, 0, bytes_c), "Clearing d_c for sparse test");
+                     
+                     // Setup sparse parameters
+                     SparseParams sparseParams = {cusparseHandle, a_csr, d_b, d_c};
+                     
+                     // Run sparse benchmark
+                     std::string implName = "cuSPARSE (d=" + std::to_string(density) + ")";
+                     PerfResult sparseResult = runBenchmark(gpu.name, implName.c_str(), sparseBenchmark, 
+                                                           &sparseParams, m, n, k, density, false);
+                     
+                     // Verify result
+                     checkCudaError(cudaMemcpy(h_c, d_c, bytes_c, cudaMemcpyDeviceToHost), "Copying d_c to h_c (sparse)");
+                     
+                     // Convert sparse matrix back to dense for verification
+                     float *h_a_sparse = (float*)malloc(m * k * sizeof(float));
+                     memset(h_a_sparse, 0, m * k * sizeof(float));
+                     
+                     // Get sparse matrix data back to host for verification
+                     float *h_values = (float*)malloc(a_csr->nnz * sizeof(float));
+                     int *h_rowPtrs = (int*)malloc((m + 1) * sizeof(int));
+                     int *h_colIndices = (int*)malloc(a_csr->nnz * sizeof(int));
+                     
+                     checkCudaError(cudaMemcpy(h_values, a_csr->values, a_csr->nnz * sizeof(float), cudaMemcpyDeviceToHost),
+                                 "Copying sparse values to host");
+                     checkCudaError(cudaMemcpy(h_rowPtrs, a_csr->rowPtrs, (m + 1) * sizeof(int), cudaMemcpyDeviceToHost),
+                                 "Copying sparse row pointers to host");
+                     checkCudaError(cudaMemcpy(h_colIndices, a_csr->colIndices, a_csr->nnz * sizeof(int), cudaMemcpyDeviceToHost),
+                                 "Copying sparse column indices to host");
+                     
+                     // Convert CSR back to dense for verification
+                     for (int i = 0; i < m; i++) {
+                         for (int nnz_idx = h_rowPtrs[i]; nnz_idx < h_rowPtrs[i + 1]; nnz_idx++) {
+                             int j = h_colIndices[nnz_idx];
+                             h_a_sparse[i * k + j] = h_values[nnz_idx];
+                         }
+                     }
+                     
+                     // Verify against reference sparse matrix
+                     bool sparseVerification = verifySparseResults(h_a_sparse, h_b, h_c, m, n, k, 
+                                                                std::min(100, (int)(m * n * 0.01)), 1e-2f);
+                     sparseResult.verificationResult = sparseVerification ? "PASSED" : "FAILED";
+                     printf("Sparse verification: %s\n", sparseResult.verificationResult.c_str());
+                     
+                     // Add to results
+                     sizeResults.push_back(sparseResult);
+                     allResults.push_back(sparseResult);
+                     
+                     // Clean up sparse resources
+                     free(h_a_sparse);
+                     free(h_values);
+                     free(h_rowPtrs);
+                     free(h_colIndices);
+                     delete a_csr;
+                 }
              }
              
              // Save intermediate results for this matrix size
@@ -914,9 +1372,16 @@
              cudaDeviceReset();
              cudaSetDevice(deviceId);
              cublasCreate(&cublasHandle);
+             if (testSparse) {
+                 cusparseCreate(&cusparseHandle);
+             }
          }
          
+         // Clean up handles
          cublasDestroy(cublasHandle);
+         if (testSparse) {
+             cusparseDestroy(cusparseHandle);
+         }
      }
      
      // Save final results
@@ -925,6 +1390,12 @@
          std::string gpuNameForFile = targetGPU;
          std::replace(gpuNameForFile.begin(), gpuNameForFile.end(), ' ', '_');
          csvFilename += "_" + gpuNameForFile;
+     }
+     if (testSparse) {
+         csvFilename += "_with_sparse";
+     }
+     if (testXLarge) {
+         csvFilename += "_with_xlarge";
      }
      csvFilename += ".csv";
      

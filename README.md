@@ -23,10 +23,10 @@ A comprehensive benchmark for comparing matrix multiplication performance across
 
 ```bash
 # Basic compilation
-nvcc -o matrix_multiplication ./profiling/matrix_multiplication.cu -lcublas -O3 -arch=sm_70
+nvcc -o matrix_multiplication ./profiling/matrix_multiplication.cu -lcublas -lcusparse -O3 -arch=sm_70
 
 # For CUTLASS support
-nvcc -o matrix_multiplication ./profiling/matrix_multiplication.cu -lcublas -I/path/to/cutlass/include -O3 -arch=sm_70
+nvcc -o matrix_multiplication ./profiling/matrix_multiplication.cu -lcublas -lcusparse -I/path/to/cutlass/include -O3 -arch=sm_70
 ```
 
 ## Usage Instructions
