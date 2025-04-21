@@ -21,12 +21,12 @@ A comprehensive benchmark for comparing matrix multiplication and transpose perf
   - Large (8192×8192)
   - Non-square (1024×2048×1024)
 - Performance measurements in GFLOPs for multiplications
-- Performance measurements in GB/s for transpos
+- Performance measurements in GB/s for transpose
 - Automated chart generation
 
 ---
 
-## Building Multiplication the Benchmark
+## Building the Multiplication Benchmark
 
 ```bash
 # Basic compilation
@@ -121,7 +121,7 @@ All implementation methods (Naive, Shared Memory, Tensor Cores, cuBLAS, CUTLASS)
 
 ---
 
-### Building the Transpose Benchmark
+## Building the Transpose Benchmark
 
 Before building, ensure you have the [CUTLASS](https://github.com/NVIDIA/cutlass) library downloaded and available in `~/libraries/cutlass/include`.
 
